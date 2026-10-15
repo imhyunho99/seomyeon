@@ -1,0 +1,26 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "seomyeon-mcp"
+version = "0.1.0"
+description = "Evidence-grounded personalized Korean legal writing MCP pilot"
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+  "mcp>=2,<3",
+  "starlette>=0.46,<1",
+  "uvicorn>=0.34,<1",
+]
+
+[project.optional-dependencies]
+dev = ["httpx>=0.28,<1"]
+
+[project.scripts]
+seomyeon-mcp = "seomyeon.server:main"
+seomyeon-admin = "seomyeon.admin:main"
+seomyeon-web = "seomyeon.web:main"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/seomyeon"]

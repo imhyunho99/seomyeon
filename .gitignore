@@ -1,0 +1,17 @@
+.venv/
+__pycache__/
+.pytest_cache/
+*.pyc
+data/*.json
+data/*.lock
+data/*.sqlite3
+data/*.sqlite3-*
+data/*.sqlite3.*
+*.sqlite3-wal
+*.sqlite3-shm
+*.sqlite3-journal
+*.sqlite3.bak
+!data/.gitkeep
+.ruff_cache/
+.omx/
+.DS_Store

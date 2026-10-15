@@ -1,0 +1,406 @@
+<!doctype html>
+<html lang="ko">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="color-scheme" content="light" />
+    <meta name="theme-color" content="#fbfbfa" />
+    <title>서면 — 근거 중심 법률 초안</title>
+    <link rel="stylesheet" href="/assets/app.css" />
+    <script src="/assets/app.js" defer></script>
+  </head>
+  <body>
+    <div id="app" class="app-shell">
+      <section id="auth-view" class="auth-view" aria-labelledby="login-title">
+        <div class="auth-wordmark" aria-label="서면">서면<span>.</span></div>
+        <form id="login-form" class="login-panel" novalidate>
+          <div class="auth-switch" role="tablist" aria-label="계정 메뉴">
+            <button id="login-mode-button" class="auth-mode is-active" type="button" role="tab" aria-selected="true">로그인</button>
+            <button id="signup-mode-button" class="auth-mode" type="button" role="tab" aria-selected="false">계정 만들기</button>
+          </div>
+          <p class="kicker">법률 문서 작성</p>
+          <h1 id="login-title">바로 작업을 시작하세요.</h1>
+          <p id="auth-supporting-copy" class="supporting-copy">내 서면과 사건 자료는 내 계정에만 저장됩니다.</p>
+
+          <div id="signup-name-field" class="field-stack" hidden>
+            <label for="signup-name">이름</label>
+            <input id="signup-name" name="display_name" type="text" autocomplete="name" maxlength="80" />
+          </div>
+
+          <div class="field-stack">
+            <label for="login-email">이메일</label>
+            <input id="login-email" name="email" type="email" autocomplete="username" required />
+          </div>
+          <div class="field-stack">
+            <label for="login-password">비밀번호</label>
+            <input id="login-password" name="password" type="password" autocomplete="current-password" required />
+          </div>
+          <p id="login-error" class="form-error" role="alert" hidden></p>
+          <button id="auth-submit-button" class="button button-primary button-wide" type="submit">로그인</button>
+        </form>
+      </section>
+
+      <section id="workspace-view" class="workspace-view" aria-label="서면 작성 작업대" hidden>
+        <header class="topbar">
+          <a class="wordmark" href="#step-1" aria-label="서면 작업대">서면<span>.</span></a>
+          <div class="topbar-actions">
+            <span id="user-email" class="user-email"></span>
+            <button id="logout-button" class="text-button" type="button">로그아웃</button>
+          </div>
+        </header>
+
+        <nav class="workflow-nav" aria-label="작성 단계">
+          <ol>
+            <li>
+              <button class="step-button is-active" type="button" data-step="1" aria-current="step">
+                <span class="step-number">1</span><span>문체 학습</span>
+              </button>
+            </li>
+            <li>
+              <button class="step-button" type="button" data-step="2">
+                <span class="step-number">2</span><span>사건·관점</span>
+              </button>
+            </li>
+            <li>
+              <button class="step-button" type="button" data-step="3">
+                <span class="step-number">3</span><span>초안 검토</span>
+              </button>
+            </li>
+          </ol>
+        </nav>
+
+        <main id="main-content" class="workspace-main" tabindex="-1">
+          <section id="step-1" class="workflow-step" data-step-panel="1" aria-labelledby="step-1-title">
+            <div class="section-heading">
+              <div>
+                <p class="kicker">1 · 문체 학습</p>
+                <h1 id="step-1-title">기존 서면을 추가하세요.</h1>
+                <p>문장 자체가 아니라 반복되는 논증 방식과 표현 원칙을 찾습니다.</p>
+              </div>
+              <span id="brief-count" class="count-badge">0건</span>
+            </div>
+
+            <div class="upload-layout">
+              <form id="brief-upload-form" class="upload-zone" aria-labelledby="upload-title">
+                <input id="brief-files" type="file" accept=".txt,.md,text/plain,text/markdown" multiple hidden />
+                <svg class="upload-icon" width="38" height="38" viewBox="0 0 38 38" aria-hidden="true">
+                  <path d="M19 26V8m0 0-7 7m7-7 7 7M8 25v5h22v-5" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" />
+                </svg>
+                <h2 id="upload-title">서면 파일을 여기에 놓으세요.</h2>
+                <p>TXT 또는 MD · 여러 파일 선택 가능</p>
+                <button id="choose-files" class="button button-secondary" type="button">파일 선택</button>
+              </form>
+
+              <div class="manual-entry">
+                <div class="minor-heading">
+                  <h2>직접 붙여넣기</h2>
+                  <span>민감정보를 제거한 자료만 사용</span>
+                </div>
+                <form id="brief-text-form">
+                  <label class="sr-only" for="brief-title">서면 제목</label>
+                  <input id="brief-title" name="title" type="text" placeholder="서면 제목" required />
+                  <label class="sr-only" for="brief-text">서면 내용</label>
+                  <textarea id="brief-text" name="text" rows="7" placeholder="서면 내용을 붙여넣으세요." required></textarea>
+                  <button class="button button-secondary" type="submit">자료에 추가</button>
+                </form>
+              </div>
+            </div>
+
+            <section class="content-block" aria-labelledby="brief-list-title">
+              <div class="block-heading">
+                <div>
+                  <h2 id="brief-list-title">등록된 서면</h2>
+                  <p>최소 5건부터 시험할 수 있고, 30건 이상이면 비교가 안정적입니다.</p>
+                </div>
+                <button id="build-profile-button" class="button button-primary" type="button">작성 원칙 분석</button>
+              </div>
+              <div id="brief-list" class="document-list" aria-live="polite"></div>
+            </section>
+
+            <section id="profile-section" class="content-block" aria-labelledby="profile-title" hidden>
+              <div class="block-heading">
+                <div>
+                  <h2 id="profile-title">찾은 작성 원칙</h2>
+                  <p>실제로 사용할 원칙만 선택하세요. 근거가 없는 원칙은 적용되지 않습니다.</p>
+                </div>
+                <button id="approve-profile-button" class="button button-primary" type="button">선택 원칙 승인</button>
+              </div>
+              <div id="trait-list" class="trait-list"></div>
+            </section>
+
+            <div class="step-footer">
+              <button class="button button-primary" type="button" data-go-step="2">사건 입력으로</button>
+            </div>
+          </section>
+
+          <section id="step-2" class="workflow-step" data-step-panel="2" aria-labelledby="step-2-title" hidden>
+            <div class="section-heading">
+              <div>
+                <p class="kicker">2 · 사건·관점</p>
+                <h1 id="step-2-title">이번 사건의 재료를 확정하세요.</h1>
+                <p>사실, 법률 근거, 주장 방향을 분리해 입력합니다.</p>
+              </div>
+            </div>
+
+            <section class="content-block compact-block" aria-labelledby="matter-title-label">
+              <form id="matter-form" class="inline-form">
+                <div class="field-stack flex-field">
+                  <label id="matter-title-label" for="matter-title">사건 이름</label>
+                  <input id="matter-title" name="title" type="text" placeholder="예: 손해배상 청구 사건" required />
+                </div>
+                <button class="button button-primary" type="submit">새 사건 만들기</button>
+              </form>
+              <div id="matter-picker-wrap" class="field-stack" hidden>
+                <label for="matter-picker">작업 중인 사건</label>
+                <select id="matter-picker"></select>
+              </div>
+            </section>
+
+            <div id="matter-workspace" hidden>
+              <div class="case-grid">
+                <section class="content-block" aria-labelledby="assertion-title">
+                  <div class="block-heading">
+                    <div>
+                      <h2 id="assertion-title">사건 기록</h2>
+                      <p>확인 가능한 위치를 출처로 남기세요.</p>
+                    </div>
+                  </div>
+                  <form id="assertion-form" class="record-form">
+                    <div class="form-row">
+                      <div class="field-stack">
+                        <label for="assertion-id">근거 ID</label>
+                        <input id="assertion-id" name="assertion_id" pattern="[A-Za-z0-9_\-]{1,64}" placeholder="F1" required />
+                      </div>
+                      <div class="field-stack">
+                        <label for="assertion-kind">구분</label>
+                        <select id="assertion-kind" name="kind">
+                          <option value="fact">확정 사실</option>
+                          <option value="disputed_fact">다툼 있는 사실</option>
+                          <option value="request">청구·요청</option>
+                          <option value="constraint">제약</option>
+                        </select>
+                      </div>
+                    </div>
+                    <div class="field-stack">
+                      <label for="assertion-text">내용</label>
+                      <textarea id="assertion-text" name="text" rows="3" required></textarea>
+                    </div>
+                    <div class="field-stack">
+                      <label for="assertion-source">기록 위치</label>
+                      <input id="assertion-source" name="source_label" placeholder="갑 제1호증 3쪽" required />
+                    </div>
+                    <button class="button button-secondary" type="submit">사실 추가</button>
+                  </form>
+                  <div id="assertion-list" class="source-list"></div>
+                </section>
+
+                <section class="content-block" aria-labelledby="authority-title">
+                  <div class="block-heading">
+                    <div>
+                      <h2 id="authority-title">법률 근거</h2>
+                      <p>판례와 법령은 원문 주소까지 확인합니다.</p>
+                    </div>
+                  </div>
+                  <section class="precedent-search" aria-labelledby="precedent-search-title">
+                    <div class="precedent-search-heading">
+                      <div>
+                        <span class="official-mark">공식 원문</span>
+                        <h3 id="precedent-search-title">국가법령정보센터 판례 검색</h3>
+                      </div>
+                      <span>대법원 제공 데이터</span>
+                    </div>
+                    <form id="precedent-search-form" class="precedent-search-form">
+                      <label class="sr-only" for="precedent-query">판례 검색어</label>
+                      <input id="precedent-query" name="query" type="search" minlength="2" maxlength="120" placeholder="쟁점 또는 법률용어 입력" required />
+                      <button class="button button-secondary" type="submit">판례 검색</button>
+                    </form>
+                    <p class="precedent-help">검색 결과를 추가하면 서버가 공식 본문을 다시 조회해 사건번호와 판결요지를 고정합니다.</p>
+                    <div id="precedent-results" class="precedent-results" aria-live="polite"></div>
+                  </section>
+                  <section class="precedent-search statute-search" aria-labelledby="statute-search-title">
+                    <div class="precedent-search-heading">
+                      <div><span class="official-mark">현행 법령</span><h3 id="statute-search-title">국가법령정보센터 법령 검색</h3></div>
+                      <span>조문 원문 고정</span>
+                    </div>
+                    <form id="statute-search-form" class="precedent-search-form">
+                      <label class="sr-only" for="statute-query">법령명 검색</label>
+                      <input id="statute-query" name="query" type="search" minlength="2" maxlength="120" placeholder="예: 민법" required />
+                      <button class="button button-secondary" type="submit">법령 검색</button>
+                    </form>
+                    <p class="precedent-help">법령을 찾은 뒤 적용할 조문 번호를 입력하면 현행 조문 원문을 가져옵니다.</p>
+                    <div id="statute-results" class="precedent-results" aria-live="polite"></div>
+                  </section>
+                  <form id="authority-form" class="record-form">
+                    <div class="form-row">
+                      <div class="field-stack">
+                        <label for="authority-id">근거 ID</label>
+                        <input id="authority-id" name="authority_id" pattern="[A-Za-z0-9_\-]{1,64}" placeholder="A1" required />
+                      </div>
+                      <div class="field-stack">
+                        <label for="authority-citation">인용</label>
+                        <input id="authority-citation" name="citation" placeholder="대법원 20XX... 판결" required />
+                      </div>
+                    </div>
+                    <div class="field-stack">
+                      <label for="authority-proposition">이 근거가 뒷받침하는 명제</label>
+                      <textarea id="authority-proposition" name="proposition" rows="3" required></textarea>
+                    </div>
+                    <div class="field-stack">
+                      <label for="authority-url">원문 주소</label>
+                      <input id="authority-url" name="source_url" type="url" placeholder="https://..." required />
+                    </div>
+                    <button class="button button-secondary" type="submit">법률 근거 추가</button>
+                  </form>
+                  <div id="authority-list" class="source-list"></div>
+                </section>
+              </div>
+
+              <section class="content-block perspective-block" aria-labelledby="perspective-title">
+                <div class="block-heading">
+                  <div>
+                    <h2 id="perspective-title">사건을 보는 관점</h2>
+                    <p>초안이 끝까지 유지해야 할 중심 주장과 위험 요소입니다.</p>
+                  </div>
+                </div>
+                <form id="perspective-form" class="perspective-form">
+                  <div class="field-stack thesis-field">
+                    <label for="perspective-thesis">중심 주장</label>
+                    <textarea id="perspective-thesis" name="thesis" rows="3" placeholder="이 사건에서 법원이 가장 먼저 받아들여야 할 한 문장" required></textarea>
+                  </div>
+                  <div class="field-stack">
+                    <label for="perspective-priorities">강조할 순서</label>
+                    <textarea id="perspective-priorities" name="priorities" rows="3" placeholder="한 줄에 하나씩 입력"></textarea>
+                  </div>
+                  <div class="field-stack">
+                    <label for="perspective-risks">피해야 할 위험</label>
+                    <textarea id="perspective-risks" name="risks" rows="3" placeholder="한 줄에 하나씩 입력"></textarea>
+                  </div>
+                  <button class="button button-secondary" type="submit">관점 저장</button>
+                </form>
+              </section>
+
+              <section class="content-block" aria-labelledby="case-structure-title">
+                <div class="block-heading"><div><h2 id="case-structure-title">제출 정보와 논증 구조</h2><p>청구·항변별 요건사실, 입증책임, 상대방 주장에 대한 답변을 확정합니다.</p></div></div>
+                <form id="case-metadata-form" class="record-form structure-form">
+                  <div class="form-row three-columns">
+                    <div class="field-stack"><label for="case-court">법원</label><input id="case-court" name="court" placeholder="서울중앙지방법원 귀중" required /></div>
+                    <div class="field-stack"><label for="case-number">사건번호</label><input id="case-number" name="case_number" placeholder="2026가단12345" /></div>
+                    <div class="field-stack"><label for="document-type">문서 유형</label><input id="document-type" name="document_type" value="준비서면" required /></div>
+                  </div>
+                  <div class="form-row">
+                    <div class="field-stack"><label for="filing-party">작성 당사자</label><input id="filing-party" name="filing_party" placeholder="피고 홍길동" required /></div>
+                    <div class="field-stack"><label for="opposing-party">상대방</label><input id="opposing-party" name="opposing_party" placeholder="원고 김철수" required /></div>
+                  </div>
+                  <div class="field-stack"><label for="relief-sought">청구취지·요청 결론</label><textarea id="relief-sought" name="relief_sought" rows="2" required></textarea></div>
+                  <button class="button button-secondary" type="submit">제출 정보 저장</button>
+                </form>
+
+                <div class="structure-grid">
+                  <section>
+                    <div class="minor-heading"><h3>청구·항변과 요건사실</h3><span>요건마다 사실·법률 근거 연결</span></div>
+                    <form id="claim-element-form" class="record-form">
+                      <div class="form-row"><div class="field-stack"><label for="claim-id">청구 ID</label><input id="claim-id" name="claim_id" placeholder="C1" required /></div><div class="field-stack"><label for="claim-position">구분</label><select id="claim-position" name="position"><option value="claim">청구</option><option value="defense">항변</option></select></div></div>
+                      <div class="field-stack"><label for="claim-label">청구·항변명</label><input id="claim-label" name="label" placeholder="대여금 반환청구" required /></div>
+                      <div class="field-stack"><label for="claim-relief">이 항목의 결론</label><input id="claim-relief" name="requested_relief" placeholder="원고 청구 기각" required /></div>
+                      <div class="form-row"><div class="field-stack"><label for="element-id">요건 ID</label><input id="element-id" name="element_id" placeholder="E1" required /></div><div class="field-stack"><label for="element-name">요건명</label><input id="element-name" name="name" placeholder="반환 약정" required /></div></div>
+                      <div class="field-stack"><label for="legal-test">법률요건</label><textarea id="legal-test" name="legal_test" rows="2" required></textarea></div>
+                      <div class="form-row three-columns"><div class="field-stack"><label for="burden-party">입증책임자</label><input id="burden-party" name="burden_party" placeholder="원고" required /></div><div class="field-stack"><label for="element-conclusion">판단</label><select id="element-conclusion" name="conclusion"><option value="satisfied">충족</option><option value="not_satisfied">불충족</option><option value="disputed">다툼</option></select></div><div></div></div>
+                      <div class="form-row"><div class="field-stack"><label for="element-facts">사실 근거 ID</label><input id="element-facts" name="assertion_ids" placeholder="F1, F2" required /></div><div class="field-stack"><label for="element-law">법률 근거 ID</label><input id="element-law" name="authority_ids" placeholder="A1, A2" required /></div></div>
+                      <button class="button button-secondary" type="submit">요건 추가</button>
+                    </form>
+                    <div id="claim-structure-list" class="structure-list"></div>
+                  </section>
+                  <section>
+                    <div class="minor-heading"><h3>상대방 주장별 답변</h3><span>인정·부인·부지·일부 인정</span></div>
+                    <form id="opposing-position-form" class="record-form">
+                      <div class="form-row"><div class="field-stack"><label for="position-id">주장 ID</label><input id="position-id" name="position_id" placeholder="P1" required /></div><div class="field-stack"><label for="response-type">답변</label><select id="response-type" name="response"><option value="deny">부인</option><option value="admit">인정</option><option value="lack_knowledge">부지</option><option value="partial">일부 인정·일부 부인</option></select></div></div>
+                      <div class="field-stack"><label for="opposing-allegation">상대방 주장</label><textarea id="opposing-allegation" name="allegation" rows="2" required></textarea></div>
+                      <div class="field-stack"><label for="response-text">구체적 답변·반박</label><textarea id="response-text" name="response_text" rows="3"></textarea></div>
+                      <div class="form-row"><div class="field-stack"><label for="response-facts">사실 근거 ID</label><input id="response-facts" name="assertion_ids" placeholder="F1, F2" /></div><div class="field-stack"><label for="response-law">법률 근거 ID</label><input id="response-law" name="authority_ids" placeholder="A1" /></div></div>
+                      <button class="button button-secondary" type="submit">답변 추가</button>
+                    </form>
+                    <div id="position-structure-list" class="structure-list"></div>
+                  </section>
+                </div>
+                <div class="argument-plan-panel">
+                  <div><h3>논증계획 검사</h3><p>요건·입증책임·포섭·반박에 빠진 근거가 있으면 승인을 차단합니다.</p></div>
+                  <div class="plan-actions"><button id="build-argument-plan-button" class="button button-secondary" type="button">논증계획 생성</button><button id="approve-argument-plan-button" class="button button-primary" type="button">논증계획 승인</button></div>
+                  <div id="argument-plan-result" class="plan-result"></div>
+                </div>
+              </section>
+
+              <div class="approval-bar">
+                <div>
+                  <strong>자료를 확인했나요?</strong>
+                  <span>선택한 사건 기록·법률 근거·관점만 초안에 사용됩니다.</span>
+                </div>
+                <button id="approve-matter-button" class="button button-primary" type="button">전체 확인 후 승인</button>
+              </div>
+            </div>
+
+            <div class="step-footer split-footer">
+              <button class="text-button" type="button" data-go-step="1">이전</button>
+              <button class="button button-primary" type="button" data-go-step="3">초안 검토로</button>
+            </div>
+          </section>
+
+          <section id="step-3" class="workflow-step draft-step" data-step-panel="3" aria-labelledby="step-3-title" hidden>
+            <div class="section-heading draft-heading">
+              <div>
+                <p class="kicker">3 · 초안 검토</p>
+                <h1 id="step-3-title">근거와 함께 초안을 검토하세요.</h1>
+                <p>형식 검사는 의미상 근거를 보증하지 않습니다. 최종 제출 전 변호사가 원문과 기록을 확인해야 합니다.</p>
+              </div>
+              <button id="generate-draft-button" class="button button-primary" type="button">초안 생성</button>
+            </div>
+
+            <div class="draft-layout">
+              <article class="editor-panel" aria-label="초안 편집기">
+                <div class="editor-toolbar">
+                  <div class="draft-title-wrap">
+                    <label class="sr-only" for="draft-title">초안 제목</label>
+                    <input id="draft-title" class="draft-title" value="준비서면" />
+                  </div>
+                  <div class="editor-meta">
+                    <span id="save-status">아직 생성되지 않음</span>
+                    <button id="copy-draft-button" class="text-button" type="button" disabled>전체 복사</button>
+                  </div>
+                </div>
+                <label class="sr-only" for="draft-content">초안 내용</label>
+                <textarea id="draft-content" class="draft-content" spellcheck="false" placeholder="사건 자료를 승인한 뒤 초안을 생성하세요." readonly></textarea>
+              </article>
+
+              <aside class="evidence-rail" aria-labelledby="evidence-title">
+                <div class="rail-marker" aria-hidden="true"></div>
+                <div class="rail-heading">
+                  <p class="kicker">Evidence</p>
+                  <h2 id="evidence-title">근거 점검</h2>
+                </div>
+                <div id="verification-summary" class="verification-summary status-neutral">
+                  <span class="status-dot"></span>
+                  <div><strong>검사 전</strong><span>초안을 생성하면 결과가 표시됩니다.</span></div>
+                </div>
+                <div id="finding-list" class="finding-list"></div>
+                <div class="rail-sources">
+                  <h3>승인된 근거</h3>
+                  <div id="approved-source-list" class="approved-source-list"></div>
+                </div>
+              </aside>
+            </div>
+
+            <div class="step-footer split-footer">
+              <button class="text-button" type="button" data-go-step="2">자료 수정</button>
+              <p>최종 제출 가능 여부는 담당 변호사가 판단합니다.</p>
+            </div>
+          </section>
+        </main>
+      </section>
+    </div>
+
+    <div id="toast-region" class="toast-region" role="status" aria-live="polite" aria-atomic="true"></div>
+    <div id="busy-overlay" class="busy-overlay" aria-live="assertive" hidden>
+      <div class="spinner" aria-hidden="true"></div>
+      <span id="busy-label">처리 중</span>
+    </div>
+  </body>
+</html>
