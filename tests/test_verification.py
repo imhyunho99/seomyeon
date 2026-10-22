@@ -75,3 +75,20 @@ class VerificationTests(unittest.TestCase):
             _matter(),
         )
         self.assertIn("citation_unrelated", {item.code for item in findings})
+
+
+class QuotedAuthorityTests(unittest.TestCase):
+    def test_fluff_inside_quoted_authority_text_is_not_flagged(self) -> None:
+        from seomyeon.models import Authority, Matter
+        from seomyeon.services.verification import verify_draft
+
+        proposition = "이 판례는 이자제한법 사건에 당연히 원용될 수 있는 것이 아니다."
+        matter = Matter(
+            matter_id="m", lawyer_id="l", title="t",
+            authorities=[Authority("P1", "대법원 판결", proposition, "https://law.go.kr", True)],
+        )
+        content = f"대법원 판결에 따르면 {proposition} [법률: P1]"
+        codes = {item.code for item in verify_draft(content, matter)}
+        self.assertNotIn("unsupported_certainty", codes)
+        own = verify_draft("피고의 주장은 당연히 배척되어야 합니다. [법률: P1]", matter)
+        self.assertIn("unsupported_certainty", {item.code for item in own})

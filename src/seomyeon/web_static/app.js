@@ -5,7 +5,8 @@
  * POST /api/signup {display_name,email,password}
  * POST /api/logout
  * GET  /api/workspace
- * POST /api/briefs {title,text}
+ * POST /api/briefs {title,text,pseudonymize?}
+ * POST /api/briefs/upload  raw file body, X-Filename header
  * POST /api/profile/build
  * POST /api/profile/approve {trait_ids}
  * POST /api/matters {title}
@@ -44,7 +45,7 @@ const escapeHtml = (value = "") => String(value).replace(/[&<>'"]/g, (char) => (
 async function api(path, options = {}) {
   const method = options.method || "GET";
   const headers = { Accept: "application/json", ...(options.headers || {}) };
-  if (options.body && !(options.body instanceof FormData)) headers["Content-Type"] = "application/json";
+  if (options.body && !(options.body instanceof FormData) && !headers["Content-Type"]) headers["Content-Type"] = "application/json";
   if (method !== "GET" && !["/api/login", "/api/signup"].includes(path) && state.csrfToken) headers["X-CSRF-Token"] = state.csrfToken;
 
   const response = await fetch(path, { ...options, method, headers, credentials: "same-origin" });
@@ -287,6 +288,35 @@ function renderPrecedentResults() {
     </article>`).join("") : '<div class="empty-state compact-empty">검색 결과가 없습니다.</div>';
 }
 
+function renderSuggestions(result) {
+  const issues = (result.issues || []).map((item) => `<li>${escapeHtml(item)}</li>`).join("");
+  const statutes = (result.statutes || []).map((item) => `
+    <article class="precedent-result">
+      <div>
+        <p>조문 · ${escapeHtml(item.via)}</p>
+        <strong>${escapeHtml(item.law_name)} 제${escapeHtml(item.article_number)}조${item.title ? ` (${escapeHtml(item.title)})` : ""}</strong>
+        <span>${escapeHtml(item.reason)}</span>
+        <details><summary>조문 원문 보기</summary><p>${escapeHtml(item.text)}</p></details>
+      </div>
+      <button class="text-button" type="button" data-suggest-statute="${escapeHtml(item.mst)}" data-article="${escapeHtml(item.article_number)}">근거로 추가</button>
+    </article>`).join("");
+  const precedents = (result.precedents || []).map((item) => `
+    <article class="precedent-result">
+      <div>
+        <p>판례 · 관련도 ${escapeHtml(String(item.score))}/3 · ${escapeHtml(item.via)}</p>
+        <strong>${escapeHtml(item.citation)}</strong>
+        <span>${escapeHtml(item.reason)}</span>
+        <details><summary>판시사항·판결요지 보기</summary><p>${escapeHtml(item.issues)}</p><p>${escapeHtml(item.holding)}</p></details>
+      </div>
+      <button class="text-button" type="button" data-suggest-precedent="${escapeHtml(item.precedent_id)}">근거로 추가</button>
+    </article>`).join("");
+  const notes = (result.notes || []).map((item) => `<li>${escapeHtml(item)}</li>`).join("");
+  el("suggest-results").innerHTML = `
+    ${issues ? `<p class="precedent-help">찾은 쟁점</p><ul>${issues}</ul>` : ""}
+    ${statutes || precedents || '<div class="empty-state compact-empty">후보를 찾지 못했습니다.</div>'}
+    ${notes ? `<details><summary>검색 과정 메모 ${(result.notes || []).length}건</summary><ul>${notes}</ul></details>` : ""}`;
+}
+
 function renderStatuteResults() {
   const results = state.statuteResults;
   el("statute-results").innerHTML = results.length ? results.map((item) => `
@@ -369,15 +399,19 @@ async function uploadTextBrief(title, text) {
 }
 
 async function uploadFiles(files) {
-  const supported = [...files].filter((file) => /\.(txt|md)$/i.test(file.name) || ["text/plain", "text/markdown"].includes(file.type));
-  if (!supported.length) throw new Error("현재는 TXT와 MD 파일만 읽을 수 있습니다.");
+  const supported = [...files].filter((file) => /\.(hwp|hwpx|txt|md)$/i.test(file.name));
+  if (!supported.length) throw new Error("HWP, HWPX, TXT, MD 파일만 읽을 수 있습니다.");
+  let names = 0;
   for (const file of supported) {
-    const text = await file.text();
-    if (!text.trim()) throw new Error(`${file.name}에 읽을 수 있는 내용이 없습니다.`);
-    await uploadTextBrief(file.name.replace(/\.(txt|md)$/i, ""), text);
+    const result = await api("/api/briefs/upload", {
+      method: "POST",
+      body: await file.arrayBuffer(),
+      headers: { "Content-Type": "application/octet-stream", "X-Filename": encodeURIComponent(file.name) },
+    }).catch((error) => { throw new Error(`${file.name}: ${error.message}`); });
+    names += result.redaction?.names || 0;
   }
   await refreshWorkspace();
-  toast(`${supported.length}건의 서면을 추가했습니다.`);
+  toast(`${supported.length}건의 서면을 추가했습니다. 실명 ${names}개를 가명으로 바꿨습니다.`);
 }
 
 function lines(value) { return value.split("\n").map((item) => item.trim()).filter(Boolean); }
@@ -390,7 +424,9 @@ function renderDraft(result) {
   state.displayedMatterId = result.matter_id || state.activeMatterId;
   el("draft-content").readOnly = false;
   el("copy-draft-button").disabled = !content;
-  el("save-status").textContent = result.draft_id ? `초안 ${result.draft_id}` : "초안 생성됨";
+  const generation = result.generation || result.draft?.generation || {};
+  const model = generation.model && generation.model !== "deterministic" ? ` · ${generation.model} 문장 다듬기 ${generation.rewritten_paragraphs ?? 0}문단` : "";
+  el("save-status").textContent = (result.draft_id ? `초안 ${result.draft_id}` : "초안 생성됨") + model;
 
   const summary = el("verification-summary");
   summary.className = `verification-summary ${passed ? "status-pass" : "status-fail"}`;
@@ -542,6 +578,30 @@ function bindEvents() {
     state.statuteResults = result.results || [];
     renderStatuteResults();
   }, "현행 법령 검색 중"));
+
+  el("suggest-button").addEventListener("click", runAction(async () => {
+    if (!state.activeMatterId) throw new Error("먼저 사건을 만드세요.");
+    const result = await api(`/api/matters/${encodeURIComponent(state.activeMatterId)}/authorities/suggest`, { method: "POST", body: "{}" });
+    renderSuggestions(result);
+    toast(`조문 ${(result.statutes || []).length}건, 판례 ${(result.precedents || []).length}건을 찾았습니다. 읽어 보고 필요한 것만 추가하세요.`);
+  }, "근거 후보를 찾는 중 (몇 분 걸릴 수 있습니다)"));
+
+  el("suggest-results").addEventListener("click", runAction(async (event) => {
+    const statute = event.target.closest("[data-suggest-statute]");
+    const precedent = event.target.closest("[data-suggest-precedent]");
+    if (!statute && !precedent) return;
+    const authorityId = nextAuthorityId();
+    const base = `/api/matters/${encodeURIComponent(state.activeMatterId)}/authorities`;
+    if (statute) {
+      await api(`${base}/import-statute`, { method: "POST", body: JSON.stringify({ authority_id: authorityId, mst: statute.dataset.suggestStatute, article_number: statute.dataset.article }) });
+    } else {
+      await api(`${base}/import-precedent`, { method: "POST", body: JSON.stringify({ authority_id: authorityId, precedent_id: precedent.dataset.suggestPrecedent }) });
+    }
+    (statute || precedent).disabled = true;
+    (statute || precedent).textContent = `${authorityId}로 추가됨`;
+    await refreshWorkspace();
+    toast(`${authorityId}로 추가했습니다. 원문을 읽고 승인하세요.`);
+  }, "공식 원문 확인 중"));
 
   el("statute-results").addEventListener("click", runAction(async (event) => {
     const button = event.target.closest("[data-import-statute]");

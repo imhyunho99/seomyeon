@@ -12,6 +12,7 @@ It is not a legal research service, autonomous legal advice, or a court-filing s
 - Register and confirm matter assertions.
 - Search and import official precedents and current statute articles from the
   국가법령정보 공동활용 API, then require lawyer approval.
+- Suggest authorities from the confirmed record: candidate articles fetched from the official source, Supreme Court precedents found through the statute link (`JO`) and keyword search, and leading cases recovered by counting citations (참조판례). Suggestions are never added or approved automatically.
 - Require a lawyer-selected case perspective.
 - Record court/case/party/relief metadata.
 - Build a claim/defense matrix with elements, burden of proof, linked facts,
@@ -70,7 +71,9 @@ SEOMYEON_LAW_API_OC="test" \
 seomyeon-web
 ```
 
-Open `http://127.0.0.1:8787`. The seed variables are optional and exist only for a local tester account; production mode refuses them. Normal users create a personal account in the browser, and every profile, brief, matter, packet, and draft is stored under the authenticated account ID. There is no shared-workspace concept. New passwords require at least eight characters. The service accepts UTF-8 text pasted from redacted `.txt` or `.md` files. PDF, DOCX, and HWP/HWPX parsing is intentionally not claimed yet.
+Open `http://127.0.0.1:8787`. The seed variables are optional and exist only for a local tester account; production mode refuses them. Normal users create a personal account in the browser, and every profile, brief, matter, packet, and draft is stored under the authenticated account ID. There is no shared-workspace concept. New passwords require at least eight characters. Briefs can be uploaded as `.hwp` (HWP 5.0), `.hwpx`, `.txt`, or `.md` (up to 10 MB per file), or pasted as text. Password-protected and distribution HWP files are refused. PDF and DOCX are not supported.
+
+Every brief is pseudonymized before it is stored. People named next to a role label (원고, 피고인, 고소인, 성명, 변호사 ...) or in the file name are replaced everywhere with A, B, C; resident numbers, phone numbers, e-mail addresses, account numbers, and plates are masked. The real-name mapping is neither stored nor returned. This is rule-based: a person who never appears next to a role label is missed, so the lawyer still reviews what was stored.
 
 `SEOMYEON_LAW_API_OC` enables official precedent and current-statute search/import through the Ministry of Government Legislation's 국가법령정보 공동활용 API. `test` is the public documentation credential and is accepted only for local evaluation. Apply for a production OC and register the deployment domain/server IP through the [official application page](https://open.law.go.kr/LSO/usrJoin.do). The adapter uses the documented [precedent search](https://open.law.go.kr/LSO/openApi/guideResult.do?htmlName=precListGuide), [precedent detail](https://open.law.go.kr/LSO/openApi/guideResult.do?htmlName=precInfoGuide), and statute endpoints. It keeps the credential server-side, stores the official source ID/retrieval time/content hash, rate-limits account searches, and requires a separate lawyer approval after import. The available precedent corpus is not an exhaustive court-record search.
 
@@ -89,9 +92,35 @@ seomyeon-web
 
 Production mode refuses insecure cookies, non-HTTPS origins, and tester-account seeding. The reverse proxy must also enforce HTTPS and a matching request-body limit. Legal materials remain plaintext within the SQLite database, so a real deployment must use encrypted disks and backups or migrate to encrypted managed storage.
 
+## Drafting model
+
+The draft is first assembled deterministically from approved records. A model, if configured, then does two separate things:
+
+1. **Refine**: rewrites each cited paragraph toward the approved style. A rewrite is rejected, and the scaffold paragraph kept, if it changes any citation tag, introduces a number not in the paragraph, introduces a legal term that changes the claim's character (손해배상, 위자료, 투자금 ...), or grows too long.
+2. **Semantic check**: a separate call judges each paragraph against the sources it cites (`entailed`, `partial`, `contradicted`, `unrelated`). Anything but `entailed` becomes a finding.
+
+Each draft records the model and prompt version in `generation`.
+
+| `SEOMYEON_MODEL_PROVIDER` | What runs | Data leaves the machine |
+|---|---|---|
+| unset / `none` | deterministic scaffold only | no |
+| `ollama` | local model via Ollama (`SEOMYEON_OLLAMA_MODEL`, default `exaone3.5:7.8b`); URL must be loopback | no |
+| `anthropic` | Claude (`SEOMYEON_CLAUDE_MODEL`, default `claude-opus-5-5`); needs `pip install -e ".[claude]"` and `SEOMYEON_ALLOW_EXTERNAL_MODEL=1` | yes |
+
+`exaone3.5:7.8b` is under a non-commercial license: use it for local evaluation only.
+
+```bash
+ollama pull exaone3.5:7.8b
+SEOMYEON_MODEL_PROVIDER=ollama seomyeon-web
+```
+
+## Secrets
+
+`ANTHROPIC_API_KEY` and `SEOMYEON_LAW_API_OC` are read from the environment, then from `~/.config/seomyeon/secrets.env` (`KEY=value` lines, mode 600, outside the repository).
+
 ## Current drafting-quality boundary
 
-The web path does not yet call an LLM. It extracts observable document habits (including dominant transitions, heading order, conclusion placement, sentence length, formal endings, and evidence placement) and applies them to a deterministic, source-linked draft. A 100-document synthetic account E2E is included in the test suite.
+Profile extraction does not call a model. It extracts observable document habits (including dominant transitions, heading order, conclusion placement, sentence length, formal endings, and evidence placement) and applies them to a deterministic, source-linked draft. A 100-document synthetic account E2E is included in the test suite.
 
 The service now builds a lawyer-entered claim/defense matrix, burden-of-proof paragraphs, fact-to-element applications, bounded rule paragraphs, opposing-position responses, and a court/case/party/relief cover. This is controlled document assembly, not autonomous legal reasoning. It does **not** infer missing causes of action, decide the legally correct elements or burden, prove semantic entailment, select the best authority automatically, or guarantee filing completeness. The citation-topic check is lexical and can produce both false positives and false negatives. A green check therefore means that the approved structure and known source IDs passed the implemented gates; it is not a truth or filing-readiness decision.
 
@@ -154,14 +183,18 @@ See `skills/korean-legal-writing/references/pilot-evaluation.md` for the evaluat
 
 ## Deferred production work
 
-- HWP/HWPX/PDF ingestion and sandboxed OCR
+- PDF/DOCX ingestion and sandboxed OCR
 - production OC capacity/licensing review and broader Korean legal-source coverage
 - PostgreSQL/pgvector and encrypted object storage
 - email verification, password reset, MFA, and optional external identity providers
 - immutable audit events and deletion workflows
-- model gateway with provider retention/training controls
+- provider retention/training controls (zero data retention) before real client material goes to an external model
 - DOCX/HWP export and inline review UI
 - billing and multi-lawyer firm administration
 - PostgreSQL migration for horizontal scaling (the web service currently uses transactional SQLite)
 - shared/distributed rate limiting and quota enforcement for multiple app instances
 - encrypted database/backups and tenant-scoped key management
+
+## License
+
+MIT. See [LICENSE](LICENSE). The bundled local model `exaone3.5:7.8b` is not part of this repository and has its own non-commercial license.

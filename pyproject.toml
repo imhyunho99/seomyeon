@@ -7,15 +7,19 @@ name = "seomyeon-mcp"
 version = "0.1.0"
 description = "Evidence-grounded personalized Korean legal writing MCP pilot"
 readme = "README.md"
+license = "MIT"
+license-files = ["LICENSE"]
 requires-python = ">=3.12"
 dependencies = [
   "mcp>=2,<3",
+  "olefile>=0.47,<1",
   "starlette>=0.46,<1",
   "uvicorn>=0.34,<1",
 ]
 
 [project.optional-dependencies]
 dev = ["httpx>=0.28,<1"]
+claude = ["anthropic>=1.15,<2"]
 
 [project.scripts]
 seomyeon-mcp = "seomyeon.server:main"

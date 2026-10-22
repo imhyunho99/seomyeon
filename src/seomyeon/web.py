@@ -8,7 +8,7 @@ import time
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
-from urllib.parse import urlparse
+from urllib.parse import unquote, urlparse
 
 import uvicorn
 from starlette.applications import Starlette
@@ -20,7 +20,10 @@ from starlette.routing import Route
 
 from .admin import approve_matter_inputs, approve_profile
 from .auth import AccountError, AccountStore, DuplicateAccountError
-from .legal_sources import LawOpenDataClient, LegalSourceError
+from .ingest import extract_text
+from .korean import josa
+from .llm import ModelBackend, backend_from_env, read_secret
+from .legal_sources import LawOpenDataClient, LegalSourceError, core_holding
 from .models import (
     Authority,
     CaseMetadata,
@@ -38,7 +41,10 @@ from .models import (
     to_dict,
     validate_source_id,
 )
+from .redaction import names_from_filename, redact
 from .services.drafting import DraftingContext, prepare_context
+from .services.model_drafting import PROMPT_VERSION, refine_draft, semantic_check
+from .services.authority_finder import find_authorities
 from .services.argumentation import approve_argument_plan, build_argument_plan
 from .services.profile import build_profile
 from .services.verification import verify_draft
@@ -53,6 +59,7 @@ class WebConfig:
     cookie_secure: bool = False
     session_hours: int = 12
     max_request_bytes: int = 2_500_000
+    max_upload_bytes: int = 10 * 1024 * 1024
     max_storage_bytes_per_user: int = 50_000_000
     max_briefs_per_user: int = 100
     max_matters_per_user: int = 100
@@ -94,21 +101,25 @@ class RateLimitExceededError(ValueError):
 class RequestBodyLimitMiddleware:
     """Bound bodies by bytes even when Content-Length is absent or chunked."""
 
-    def __init__(self, app, max_bytes: int):
+    def __init__(
+        self, app, max_bytes: int, path_limits: dict[str, int] | None = None
+    ):
         self.app = app
         self.max_bytes = max_bytes
+        self.path_limits = path_limits or {}
 
     async def __call__(self, scope, receive, send) -> None:
         if scope["type"] != "http":
             await self.app(scope, receive, send)
             return
 
+        max_bytes = self.path_limits.get(scope.get("path", ""), self.max_bytes)
         content_length = dict(scope.get("headers", [])).get(b"content-length")
         try:
             declared_size = int(content_length) if content_length else 0
         except ValueError:
-            declared_size = self.max_bytes + 1
-        if declared_size > self.max_bytes:
+            declared_size = max_bytes + 1
+        if declared_size > max_bytes:
             await self._reject(scope, receive, send)
             return
 
@@ -119,7 +130,7 @@ class RequestBodyLimitMiddleware:
             if message["type"] == "http.disconnect":
                 return
             chunk = message.get("body", b"")
-            if len(body) + len(chunk) > self.max_bytes:
+            if len(body) + len(chunk) > max_bytes:
                 await self._reject(scope, receive, send)
                 return
             body.extend(chunk)
@@ -257,7 +268,7 @@ def _compose_draft(context: DraftingContext) -> tuple[str, list[str]]:
             (
                 "검토가 필요한 사항",
                 [
-                    f"다만 {', '.join(risk_items)}은 반대 방향의 판단 요소가 될 수 있으므로 "
+                    f"다만 {josa(', '.join(risk_items), '은', '는')} 반대 방향의 판단 요소가 될 수 있으므로 "
                     f"최종 제출 전 별도 검토가 필요하다. {fact_refs} {law_refs}"
                 ],
             )
@@ -340,6 +351,7 @@ def create_app(
     config: WebConfig,
     accounts: AccountStore,
     law_client: LawOpenDataClient | None = None,
+    model_backend: ModelBackend | None = None,
 ) -> Starlette:
     state = WebState(store, accounts, config, law_client)
 
@@ -556,14 +568,62 @@ def create_app(
             max_count=config.max_briefs_per_user,
         )
         data = _json_body(request)
+        return save_brief(
+            request,
+            title=_require_text(data, "title", max_length=160),
+            text=_require_text(data, "text", max_length=2_000_000),
+            pseudonymize=data.get("pseudonymize", True) is not False,
+        )
+
+    def save_brief(
+        request: Request,
+        *,
+        title: str,
+        text: str,
+        pseudonymize: bool,
+        extra_names: list[str] | None = None,
+    ) -> Response:
+        summary = {"applied": pseudonymize, "names": 0, "identifiers": 0}
+        if pseudonymize:
+            names = list(extra_names or []) + names_from_filename(title)
+            result = redact(text, extra_names=names)
+            text, title = result.text, result.apply(title)
+            # 실명→가명 대응표는 저장하지도 돌려주지도 않는다
+            summary["names"] = len(result.replacements)
+            summary["identifiers"] = result.identifier_count
         brief = PriorBrief(
             brief_id=new_id("brief"),
             lawyer_id=user_id(request),
-            title=_require_text(data, "title", max_length=160),
-            text=_require_text(data, "text", max_length=2_000_000),
+            title=title[:160],
+            text=text,
         )
         store.save_brief(brief)
-        return JSONResponse(to_dict(brief), status_code=201)
+        return JSONResponse({**to_dict(brief), "redaction": summary}, status_code=201)
+
+    async def upload_brief(request: Request) -> Response:
+        ensure_quota(
+            request,
+            user_id(request),
+            kind="brief",
+            max_count=config.max_briefs_per_user,
+        )
+        filename = unquote(request.headers.get("x-filename", "")).strip()
+        filename = filename.replace("\\", "/").rsplit("/", 1)[-1]
+        if not filename or len(filename) > 255:
+            raise ValueError("파일 이름이 필요합니다.")
+        data = await request.body()
+        text = await asyncio.to_thread(extract_text, filename, data)
+        # 저장되는 것은 원본 파일이 아니라 추출된 텍스트다
+        ensure_quota(
+            request, user_id(request), additional_bytes=len(text.encode("utf-8"))
+        )
+        stem = filename.rsplit(".", 1)[0] if "." in filename else filename
+        return save_brief(
+            request,
+            title=stem,
+            text=text,
+            pseudonymize=request.query_params.get("pseudonymize", "1") != "0",
+        )
 
     async def profile_build(request: Request) -> Response:
         owner_id = user_id(request)
@@ -672,19 +732,40 @@ def create_app(
         store.update_matter(request.path_params["matter_id"], user_id(request), update)
         return JSONResponse(to_dict(authority), status_code=201)
 
-    def check_law_rate_limit(owner_id: str) -> None:
+    def check_law_rate_limit(owner_id: str, weight: int = 1) -> None:
         now = time.time()
         attempts = [
             value
             for value in state.law_search_attempts.get(owner_id, [])
             if now - value < 60
         ]
-        if len(attempts) >= 30:
+        if len(attempts) + weight > 30:
             raise RateLimitExceededError(
                 "법률정보 검색 요청이 많습니다. 잠시 후 다시 시도해 주세요."
             )
-        attempts.append(now)
+        attempts.extend([now] * weight)
         state.law_search_attempts[owner_id] = attempts
+
+    async def authority_suggest(request: Request) -> Response:
+        if state.law_client is None:
+            return JSONResponse(
+                {"error": "법률정보 API 인증값(SEOMYEON_LAW_API_OC)이 설정되지 않았습니다."},
+                status_code=503,
+            )
+        owner_id = user_id(request)
+        # 자동 찾기는 법률정보 서버를 여러 번 부르므로 일반 검색 10회분으로 센다
+        check_law_rate_limit(owner_id, weight=10)
+        matter = store.get_matter(request.path_params["matter_id"], owner_id)
+        suggestions = await asyncio.to_thread(
+            find_authorities, matter, state.law_client, model_backend
+        )
+        return JSONResponse(
+            {
+                "provider": "국가법령정보센터",
+                "model": model_backend.name if model_backend else "none",
+                **to_dict(suggestions),
+            }
+        )
 
     async def precedent_search(request: Request) -> Response:
         if state.law_client is None:
@@ -763,7 +844,7 @@ def create_app(
         authority = Authority(
             authority_id=authority_id,
             citation=citation,
-            proposition=detail.holding[:4000],
+            proposition=core_holding(detail.holding),
             source_url=detail.source_url,
             verified=False,
             official_source="국가법령정보센터",
@@ -1072,7 +1153,23 @@ def create_app(
             context=context,
         )
         content, applied_trait_ids = _compose_draft(context)
-        findings = verify_draft(content, matter)
+        generation: dict[str, Any] = {"model": "deterministic"}
+        model_findings = []
+        if model_backend is not None:
+            refined = await asyncio.to_thread(
+                refine_draft, content, profile.operational_rules, model_backend
+            )
+            content = refined.content
+            model_findings = refined.findings + await asyncio.to_thread(
+                semantic_check, content, matter, model_backend
+            )
+            generation = {
+                "model": model_backend.name,
+                "prompt_version": PROMPT_VERSION,
+                "rewritten_paragraphs": refined.rewritten,
+                "rejected_paragraphs": refined.rejected,
+            }
+        findings = verify_draft(content, matter) + model_findings
         draft = Draft(
             draft_id=new_id("draft"),
             matter_id=matter_id,
@@ -1083,6 +1180,7 @@ def create_app(
             )[:160],
             content=content,
             findings=findings,
+            generation=generation,
         )
         generated_bytes = len(
             json.dumps(to_dict(packet), ensure_ascii=False).encode("utf-8")
@@ -1153,6 +1251,7 @@ def create_app(
         Route("/api/logout", protect(logout), methods=["POST"]),
         Route("/api/workspace", protect(workspace)),
         Route("/api/briefs", protect(add_brief), methods=["POST"]),
+        Route("/api/briefs/upload", protect(upload_brief), methods=["POST"]),
         Route("/api/profile/build", protect(profile_build), methods=["POST"]),
         Route("/api/profile/approve", protect(profile_approve), methods=["POST"]),
         Route("/api/matters", protect(matter_create), methods=["POST"]),
@@ -1168,6 +1267,11 @@ def create_app(
         ),
         Route("/api/legal/precedents", protect(precedent_search)),
         Route("/api/legal/statutes", protect(statute_search)),
+        Route(
+            "/api/matters/{matter_id}/authorities/suggest",
+            protect(authority_suggest),
+            methods=["POST"],
+        ),
         Route(
             "/api/matters/{matter_id}/authorities/import-precedent",
             protect(precedent_import),
@@ -1231,7 +1335,11 @@ def create_app(
         return response
 
     app = Starlette(routes=routes)
-    app.add_middleware(RequestBodyLimitMiddleware, max_bytes=config.max_request_bytes)
+    app.add_middleware(
+        RequestBodyLimitMiddleware,
+        max_bytes=config.max_request_bytes,
+        path_limits={"/api/briefs/upload": config.max_upload_bytes},
+    )
     app.add_middleware(BaseHTTPMiddleware, dispatch=security_headers)
     app.add_middleware(TrustedHostMiddleware, allowed_hosts=list(config.allowed_hosts))
     return app
@@ -1303,13 +1411,17 @@ def main() -> None:
         if config.production:
             raise RuntimeError("운영 환경에서는 테스트 계정을 시드할 수 없습니다.")
         accounts.ensure_seed_account(seed_email, seed_password)
-    law_api_oc = os.environ.get("SEOMYEON_LAW_API_OC", "").strip()
+    law_api_oc = (read_secret("SEOMYEON_LAW_API_OC") or "").strip()
     if config.production and law_api_oc.casefold() == "test":
         raise RuntimeError(
             "운영 환경에서는 법률정보 API 샘플 인증값을 사용할 수 없습니다."
         )
     law_client = LawOpenDataClient(law_api_oc) if law_api_oc else None
-    app = create_app(SqliteStore(database_path), config, accounts, law_client)
+    model_backend = backend_from_env()
+    print(f"seomyeon: drafting model = {model_backend.name if model_backend else 'deterministic'}")
+    app = create_app(
+        SqliteStore(database_path), config, accounts, law_client, model_backend
+    )
     uvicorn.run(
         app,
         host=os.environ.get("SEOMYEON_WEB_HOST", "127.0.0.1"),

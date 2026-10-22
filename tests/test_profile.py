@@ -157,3 +157,104 @@ class ProfileTests(unittest.TestCase):
                 0.5,
                 "원문에 존재하지 않는 충분히 긴 인용문",
             )
+
+
+class ProfileRealCorpusRegressionTests(unittest.TestCase):
+    """실제 서면 26건을 넣어 보고 드러난 결함의 재현."""
+
+    def test_transition_trait_survives_when_first_brief_repeats_it(self) -> None:
+        # 첫 서면이 '나아가'를 여러 번 쓰면 앞 3개 근거가 한 서면에서만 나와
+        # 서로 다른 서면 2건 조건을 통과하지 못하던 문제
+        briefs = [
+            PriorBrief(
+                brief_id=f"brief_{index}",
+                lawyer_id="lawyer_1",
+                title=f"서면 {index}",
+                text="\n".join(
+                    f"나아가 피고는 제{n} 사정을 다투고 있습니다."
+                    for n in range(5 if index == 0 else 1)
+                ),
+            )
+            for index in range(4)
+        ]
+        profile = build_profile("lawyer_1", briefs, version=1)
+        transition = [
+            trait for trait in profile.traits if "나아가" in trait.statement
+        ]
+        self.assertEqual(len(transition), 1)
+        sources = {span.source_id for span in transition[0].evidence}
+        self.assertGreaterEqual(len(sources), 2)
+
+    def test_claim_lines_are_not_headings(self) -> None:
+        brief = PriorBrief(
+            brief_id="brief_1",
+            lawyer_id="lawyer_1",
+            title="소장",
+            text=(
+                "청 구 취 지\n"
+                "1. 피고는 원고에게 30,000,000원을 지급하라.\n"
+                "2. 소송비용은 피고가 부담한다.\n"
+                "3. 제1항은 가집행할 수 있다.\n"
+                "청 구 원 인\n"
+                "1. 당사자들의 관계\n원고와 피고는 이웃입니다.\n"
+                "2. 결론\n따라서 청구를 인용하여 주십시오."
+            ),
+        )
+        rules = build_profile("lawyer_1", [brief], version=1).operational_rules
+        joined = " ".join(rules["heading_sequence"])
+        self.assertNotIn("부담한다", joined)
+        self.assertNotIn("가집행", joined)
+
+    def test_heading_shared_only_by_revisions_of_one_case_is_excluded(self) -> None:
+        # 같은 사건의 수정본 두 개가 공유하는 제목은 서면 26건 중 공통 규칙이 아니다
+        briefs = [
+            PriorBrief(
+                brief_id=f"brief_{index}",
+                lawyer_id="lawyer_1",
+                title=f"서면 {index}",
+                text=(
+                    "1. 사실관계\n원고는 송금하였습니다.\n"
+                    + ("2. 피고와 A 사이의 부정행위\n피고는 다툽니다.\n" if index < 2 else "")
+                    + "3. 결론\n따라서 기각되어야 합니다."
+                ),
+            )
+            for index in range(26)
+        ]
+        rules = build_profile("lawyer_1", briefs, version=1).operational_rules
+        self.assertEqual(rules["heading_sequence"], ["사실관계", "결론"])
+
+    def test_numbers_without_label_are_not_headings(self) -> None:
+        briefs = [
+            PriorBrief(
+                brief_id=f"brief_{index}",
+                lawyer_id="lawyer_1",
+                title="서면",
+                text="1. 사실관계\n원고는 송금하였습니다.\n10. .\n2.\n3. 결론\n따라서 기각되어야 합니다.",
+            )
+            for index in range(3)
+        ]
+        rules = build_profile("lawyer_1", briefs, version=1).operational_rules
+        self.assertEqual(rules["heading_sequence"], ["사실관계", "결론"])
+
+    def test_heading_sequence_excludes_case_specific_headings(self) -> None:
+        # 한 서면에만 나오는 제목(당사자 실명 포함)은 문체 규칙이 아니다
+        def brief(index: int, extra: str) -> PriorBrief:
+            return PriorBrief(
+                brief_id=f"brief_{index}",
+                lawyer_id="lawyer_1",
+                title=f"서면 {index}",
+                text=(
+                    "1. 사실관계\n원고는 송금하였습니다.\n"
+                    f"2. {extra}\n피고는 다툽니다.\n"
+                    "3. 결론\n따라서 기각되어야 합니다."
+                ),
+            )
+
+        briefs = [
+            brief(0, "피고와 안영준 사이의 부정행위"),
+            brief(1, "홍길동의 진술 신빙성"),
+            brief(2, "김철수 계좌 거래내역"),
+        ]
+        rules = build_profile("lawyer_1", briefs, version=1).operational_rules
+        self.assertEqual(rules["heading_sequence"], ["사실관계", "결론"])
+        self.assertEqual(rules["heading_numbering"][0], "1.")
