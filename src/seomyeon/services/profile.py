@@ -1,7 +1,8 @@
 from __future__ import annotations
 
+import math
 import re
-from statistics import mean
+from statistics import mean, median
 from collections import Counter
 from typing import Literal
 
@@ -11,6 +12,9 @@ SENTENCE_BOUNDARY_RE = re.compile(r"(?<=[가-힣][다요함됨임음].)\s+|(?<=[
 HEADING_RE = re.compile(
     r"(?m)^\s*((?:[IVX]+\.|[0-9]+\.|[가-힣]\.|[가-힣]+\s*[.)])[^\n]{1,80})$"
 )
+HEADING_PREFIX_RE = re.compile(r"^\s*(?:[IVX]+\.|[0-9]+\.|[가-힣]\.|[가-힣]+\s*[.)])\s*")
+# 청구취지·주문처럼 번호가 붙은 문장은 제목이 아니다
+SENTENCE_LIKE_RE = re.compile(r"(?:다|라|요|까|함|음)\s*[.。]?\s*$")
 EVIDENCE_RE = re.compile(r"(?:갑|을)\s*제?\s*\d+\s*호증")
 CONCLUSION_MARKERS = ("따라서", "그러므로", "결국", "이 사건", "청구")
 TRANSITION_MARKERS = (
@@ -47,24 +51,16 @@ def _operational_rules(
         for sentence in sentence_values
         if (match := FORMAL_ENDING_RE.search(sentence))
     )
-    heading_sequences: list[list[str]] = []
     conclusion_first_count = 0
     evidence_sentence_count = 0
     for brief in briefs:
-        headings = [match.group(1).strip() for match in HEADING_RE.finditer(brief.text)]
-        if headings:
-            heading_sequences.append(headings[:8])
         opening = brief.text[: max(200, len(brief.text) // 5)]
         if any(marker in opening for marker in CONCLUSION_MARKERS):
             conclusion_first_count += 1
         evidence_sentence_count += sum(
             1 for sentence in _sentences(brief.text) if EVIDENCE_RE.search(sentence)
         )
-    dominant_sequence = max(
-        heading_sequences,
-        key=lambda sequence: sum(1 for item in heading_sequences if item == sequence),
-        default=[],
-    )
+    heading_sequence, heading_numbering = _heading_rules(briefs)
     return {
         "sentence_length_target": round(average_length, 1),
         "preferred_transition": transition_counts.most_common(1)[0][0]
@@ -79,9 +75,58 @@ def _operational_rules(
         "evidence_inline_ratio": round(
             evidence_sentence_count / max(1, len(sentence_values)), 3
         ),
-        "heading_sequence": dominant_sequence,
+        "heading_sequence": heading_sequence,
+        "heading_numbering": heading_numbering,
         "sample_size": len(briefs),
     }
+
+
+def _headings(text: str) -> list[str]:
+    return [
+        match.group(1).strip()
+        for match in HEADING_RE.finditer(text)
+        if not SENTENCE_LIKE_RE.search(match.group(1))
+    ]
+
+
+def _numbering_style(heading: str) -> str:
+    prefix = HEADING_PREFIX_RE.match(heading).group(0).strip()
+    if re.fullmatch(r"[IVX]+\.", prefix):
+        return "I."
+    if re.fullmatch(r"[0-9]+\.", prefix):
+        return "1."
+    return "가)" if prefix.endswith(")") else "가."
+
+
+def _heading_rules(briefs: list[PriorBrief]) -> tuple[list[str], list[str]]:
+    """서면 여러 건에 공통으로 나오는 제목과 번호 체계만 규칙으로 남긴다.
+
+    한 서면에만 나오는 제목은 사건 고유 내용(당사자 실명 등)이라 제외한다.
+    """
+    positions: dict[str, list[float]] = {}
+    documents: dict[str, set[str]] = {}
+    numbering_orders: Counter[tuple[str, ...]] = Counter()
+    for brief in briefs:
+        headings = _headings(brief.text)
+        if not headings:
+            continue
+        styles: list[str] = []
+        for index, heading in enumerate(headings):
+            style = _numbering_style(heading)
+            if style not in styles:
+                styles.append(style)
+            label = re.sub(r"\s+", " ", HEADING_PREFIX_RE.sub("", heading)).strip()
+            if len(re.findall(r"[가-힣]", label)) < 2:
+                continue
+            positions.setdefault(label, []).append(index / len(headings))
+            documents.setdefault(label, set()).add(brief.brief_id)
+        numbering_orders[tuple(styles)] += 1
+    # 같은 사건의 수정본끼리만 공유하는 제목을 거르려면 2건으로는 부족하다
+    threshold = max(2, math.ceil(len(briefs) * 0.1)) if len(briefs) >= 2 else 1
+    common = [label for label, ids in documents.items() if len(ids) >= threshold]
+    common.sort(key=lambda label: median(positions[label]))
+    numbering = list(numbering_orders.most_common(1)[0][0]) if numbering_orders else []
+    return common[:8], numbering
 
 
 def _sentences(text: str) -> list[str]:
@@ -149,8 +194,15 @@ def build_profile(
             )
         )
 
-    heading_span = _first_matching_span(briefs, HEADING_RE)
-    heading_count = sum(len(HEADING_RE.findall(brief.text)) for brief in briefs)
+    heading_span = next(
+        (
+            _span(brief, headings[0], brief.text.find(headings[0]))
+            for brief in briefs
+            if (headings := _headings(brief.text))
+        ),
+        None,
+    )
+    heading_count = sum(len(_headings(brief.text)) for brief in briefs)
     if heading_span:
         traits.append(
             ProfileTrait(
@@ -193,12 +245,16 @@ def build_profile(
             break
 
     preferred_transition = str(operational_rules["preferred_transition"])
-    transition_evidence = [
-        _span(brief, sentence, brief.text.find(sentence))
-        for brief, sentence in all_sentences
-        if preferred_transition in sentence
-    ][:3]
-    supporting_documents = {span.source_id for span in transition_evidence}
+    supporting_documents: set[str] = set()
+    transition_evidence: list[SourceSpan] = []
+    for brief, sentence in all_sentences:
+        if preferred_transition not in sentence or brief.brief_id in supporting_documents:
+            continue
+        supporting_documents.add(brief.brief_id)
+        if len(transition_evidence) < 3:
+            transition_evidence.append(
+                _span(brief, sentence, brief.text.find(sentence))
+            )
     if len(supporting_documents) >= 2:
         traits.append(
             ProfileTrait(

@@ -82,12 +82,12 @@
 
             <div class="upload-layout">
               <form id="brief-upload-form" class="upload-zone" aria-labelledby="upload-title">
-                <input id="brief-files" type="file" accept=".txt,.md,text/plain,text/markdown" multiple hidden />
+                <input id="brief-files" type="file" accept=".hwp,.hwpx,.txt,.md" multiple hidden />
                 <svg class="upload-icon" width="38" height="38" viewBox="0 0 38 38" aria-hidden="true">
                   <path d="M19 26V8m0 0-7 7m7-7 7 7M8 25v5h22v-5" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" />
                 </svg>
                 <h2 id="upload-title">서면 파일을 여기에 놓으세요.</h2>
-                <p>TXT 또는 MD · 여러 파일 선택 가능</p>
+                <p>HWP · HWPX · TXT · MD · 여러 파일 선택 가능 · 실명은 자동으로 가명 처리</p>
                 <button id="choose-files" class="button button-secondary" type="button">파일 선택</button>
               </form>
 
@@ -201,6 +201,15 @@
                       <p>판례와 법령은 원문 주소까지 확인합니다.</p>
                     </div>
                   </div>
+                  <section class="precedent-search suggest-search" aria-labelledby="suggest-title">
+                    <div class="precedent-search-heading">
+                      <div><span class="official-mark">자동 찾기</span><h3 id="suggest-title">사건 기록으로 근거 후보 찾기</h3></div>
+                      <span>추가와 승인은 직접</span>
+                    </div>
+                    <button id="suggest-button" class="button button-secondary" type="button">근거 자동 찾기</button>
+                    <p class="precedent-help">확정한 사건 기록과 관점에서 쟁점을 뽑아 관련 조문과, 그 조문을 참조한 대법원 판례를 찾습니다. 검색어에는 일반 법률 용어만 쓰고 이름·금액·날짜는 보내지 않습니다.</p>
+                    <div id="suggest-results" class="precedent-results" aria-live="polite"></div>
+                  </section>
                   <section class="precedent-search" aria-labelledby="precedent-search-title">
                     <div class="precedent-search-heading">
                       <div>

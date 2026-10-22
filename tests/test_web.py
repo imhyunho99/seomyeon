@@ -1,3 +1,4 @@
+import json
 import tempfile
 import unittest
 from pathlib import Path
@@ -566,3 +567,199 @@ class WebWorkflowTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class BriefUploadTests(unittest.TestCase):
+    def setUp(self) -> None:
+        self.directory = tempfile.TemporaryDirectory()
+        database_path = Path(self.directory.name) / "web.sqlite3"
+        self.accounts = AccountStore(database_path)
+        self.accounts.create_account("pilot@example.com", "correct horse battery", "파일럿")
+        self.client = TestClient(
+            create_app(
+                SqliteStore(database_path),
+                WebConfig(max_request_bytes=2048, max_upload_bytes=64_000),
+                self.accounts,
+            )
+        )
+        token = self.client.post(
+            "/api/login",
+            json={"email": "pilot@example.com", "password": "correct horse battery"},
+        ).json()["csrf_token"]
+        self.headers = {"X-CSRF-Token": token}
+
+    def tearDown(self) -> None:
+        self.client.close()
+        self.directory.cleanup()
+
+    def _upload(self, filename: str, data: bytes, **extra):
+        from urllib.parse import quote
+
+        return self.client.post(
+            "/api/briefs/upload",
+            content=data,
+            headers={
+                **self.headers,
+                "Content-Type": "application/octet-stream",
+                "X-Filename": quote(filename),
+                **extra,
+            },
+        )
+
+    def _hwpx(self, text: str) -> bytes:
+        import io
+        import zipfile
+
+        body = "".join(
+            f"<hp:p><hp:run><hp:t>{line}</hp:t></hp:run></hp:p>"
+            for line in text.split("\n")
+        )
+        buffer = io.BytesIO()
+        with zipfile.ZipFile(buffer, "w") as archive:
+            archive.writestr(
+                "Contents/section0.xml",
+                f'<hs:sec xmlns:hp="urn:hp" xmlns:hs="urn:hs">{body}</hs:sec>',
+            )
+        return buffer.getvalue()
+
+    def test_hwpx_upload_is_extracted_and_pseudonymized(self) -> None:
+        # 요청 본문 한도(2048)보다 큰 파일도 업로드 경로에서는 받는다
+        text = "피고인 박영수\n" + "박영수는 공소사실을 부인합니다.\n" * 120
+        response = self._upload("260313_형사_박영수_항소이유서.hwpx", self._hwpx(text))
+        self.assertEqual(response.status_code, 201, response.text)
+        body = response.json()
+        self.assertEqual(body["title"], "260313_형사_A_항소이유서")
+        self.assertNotIn("박영수", body["text"])
+        self.assertEqual(body["redaction"]["names"], 1)
+        self.assertNotIn("박영수", json.dumps(body, ensure_ascii=False))
+
+    def test_upload_requires_csrf(self) -> None:
+        response = self.client.post(
+            "/api/briefs/upload",
+            content=b"x",
+            headers={"X-Filename": "a.txt"},
+        )
+        self.assertEqual(response.status_code, 403)
+
+    def test_upload_limit_and_format_errors(self) -> None:
+        self.assertEqual(self._upload("a.hwp", b"0" * 64_001).status_code, 413)
+        self.assertEqual(self._upload("a.pdf", b"%PDF").status_code, 400)
+        self.assertEqual(self._upload("a.hwp", b"broken").status_code, 400)
+
+    def test_text_brief_is_pseudonymized_by_default(self) -> None:
+        response = self.client.post(
+            "/api/briefs",
+            json={"title": "준비서면", "text": "원고 홍길동\n홍길동은 송금하였습니다."},
+            headers=self.headers,
+        )
+        self.assertEqual(response.status_code, 201)
+        self.assertNotIn("홍길동", response.json()["text"])
+
+
+class ModelDraftWebTests(unittest.TestCase):
+    def _run_flow(self, backend):
+        directory = tempfile.TemporaryDirectory()
+        self.addCleanup(directory.cleanup)
+        database_path = Path(directory.name) / "web.sqlite3"
+        accounts = AccountStore(database_path)
+        accounts.create_account("pilot@example.com", "correct horse battery", "파일럿")
+        client = TestClient(
+            create_app(SqliteStore(database_path), WebConfig(), accounts, model_backend=backend)
+        )
+        self.addCleanup(client.close)
+        token = client.post(
+            "/api/login",
+            json={"email": "pilot@example.com", "password": "correct horse battery"},
+        ).json()["csrf_token"]
+        h = {"X-CSRF-Token": token}
+        client.post("/api/briefs", json={"title": "서면", "text": "1. 결론\n따라서 기각되어야 합니다."}, headers=h)
+        client.post("/api/profile/build", headers=h)
+        matter_id = client.post("/api/matters", json={"title": "대여금"}, headers=h).json()["matter_id"]
+        client.post(
+            f"/api/matters/{matter_id}/assertions",
+            json={"assertion_id": "F1", "kind": "fact", "text": "원고가 피고에게 금원을 송금하였다.", "source_label": "을 제1호증"},
+            headers=h,
+        )
+        client.post(
+            f"/api/matters/{matter_id}/authorities",
+            json={"authority_id": "A1", "citation": "민법 제598조", "proposition": "소비대차는 반환 약정이 필요하다.", "source_url": "https://law.go.kr"},
+            headers=h,
+        )
+        client.put(
+            f"/api/matters/{matter_id}/perspective",
+            json={"thesis": "송금만으로 소비대차 합의가 증명되지 않는다.", "priorities": [], "risks": []},
+            headers=h,
+        )
+        client.post(
+            f"/api/matters/{matter_id}/approve",
+            json={"assertion_ids": ["F1"], "authority_ids": ["A1"], "approve_perspective": True},
+            headers=h,
+        )
+        response = client.post(f"/api/matters/{matter_id}/draft", json={}, headers=h)
+        self.assertEqual(response.status_code, 201, response.text)
+        return response.json()
+
+    def test_model_refines_and_semantic_check_runs(self) -> None:
+        from seomyeon.llm import FakeBackend
+
+        def respond(system, user, schema):
+            if "verdict" in schema["properties"]:
+                return {"verdict": "partial", "reason": "반환 약정 부분은 근거 없음"}
+            paragraph = user.split("<paragraph>\n", 1)[1].rsplit("\n</paragraph>", 1)[0]
+            return {"text": paragraph.replace("따르면", "의하면")}
+
+        result = self._run_flow(FakeBackend(respond))
+        self.assertEqual(result["generation"]["model"], "fake")
+        self.assertGreater(result["generation"]["rewritten_paragraphs"], 0)
+        self.assertIn("의하면", result["content"])
+        self.assertIn("semantic_partial", {item["code"] for item in result["findings"]})
+
+    def test_without_model_draft_is_deterministic(self) -> None:
+        result = self._run_flow(None)
+        self.assertEqual(result["generation"]["model"], "deterministic")
+
+
+class AuthoritySuggestWebTests(unittest.TestCase):
+    def _client(self, law_client):
+        from tests.test_authority_finder import FakeLaw  # noqa: F401  (shared fake)
+
+        directory = tempfile.TemporaryDirectory()
+        self.addCleanup(directory.cleanup)
+        database_path = Path(directory.name) / "web.sqlite3"
+        accounts = AccountStore(database_path)
+        accounts.create_account("pilot@example.com", "correct horse battery", "파일럿")
+        client = TestClient(create_app(SqliteStore(database_path), WebConfig(), accounts, law_client))
+        self.addCleanup(client.close)
+        token = client.post(
+            "/api/login", json={"email": "pilot@example.com", "password": "correct horse battery"}
+        ).json()["csrf_token"]
+        h = {"X-CSRF-Token": token}
+        matter_id = client.post("/api/matters", json={"title": "대여금"}, headers=h).json()["matter_id"]
+        client.post(
+            f"/api/matters/{matter_id}/assertions",
+            json={"assertion_id": "F1", "kind": "fact", "text": "원고가 피고에게 금원을 송금하였다.", "source_label": "갑 제1호증"},
+            headers=h,
+        )
+        client.put(
+            f"/api/matters/{matter_id}/perspective",
+            json={"thesis": "소비대차가 성립하였다.", "priorities": ["소비대차 반환 약정"], "risks": []},
+            headers=h,
+        )
+        return client, h, matter_id
+
+    def test_suggest_returns_candidates_without_adding_authorities(self) -> None:
+        from tests.test_authority_finder import FakeLaw
+
+        client, h, matter_id = self._client(FakeLaw())
+        response = client.post(f"/api/matters/{matter_id}/authorities/suggest", json={}, headers=h)
+        self.assertEqual(response.status_code, 200, response.text)
+        body = response.json()
+        self.assertTrue(body["precedents"])
+        self.assertIn("notes", body)
+        matter = client.get("/api/workspace").json()["matters"][0]
+        self.assertEqual(matter["authorities"], [])
+
+    def test_suggest_requires_law_client(self) -> None:
+        client, h, matter_id = self._client(None)
+        response = client.post(f"/api/matters/{matter_id}/authorities/suggest", json={}, headers=h)
+        self.assertEqual(response.status_code, 503)

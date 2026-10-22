@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import replace
 
+from ..korean import josa
 from ..models import ArgumentPlan, ArgumentUnit, Matter
 
 
@@ -91,7 +92,7 @@ def build_argument_plan(matter: Matter) -> ArgumentPlan:
                     function="burden",
                     heading="입증책임",
                     proposition=(
-                        f"{element.name} 요건은 {element.burden_party}가 입증하여야 한다."
+                        f"{element.name} 요건은 {josa(element.burden_party, '이', '가')} 입증하여야 한다."
                     ),
                     assertion_ids=[],
                     authority_ids=element.authority_ids,

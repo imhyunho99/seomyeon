@@ -79,8 +79,19 @@ def verify_draft(content: str, matter: Matter) -> list[VerificationFinding]:
     authorities = {item.authority_id: item for item in matter.authorities}
     assertions = {item.assertion_id: item for item in matter.assertions}
 
+    # 판례·조문 원문을 그대로 인용한 부분의 표현은 작성자의 표현이 아니다
+    quoted: list[tuple[int, int]] = []
+    for item in matter.authorities:
+        text = item.proposition.strip()
+        start = content.find(text) if len(text) >= 10 else -1
+        while start >= 0:
+            quoted.append((start, start + len(text)))
+            start = content.find(text, start + 1)
+
     for code, pattern in FLUFF_PATTERNS.items():
         for match in pattern.finditer(content):
+            if any(start <= match.start() < end for start, end in quoted):
+                continue
             findings.append(
                 VerificationFinding(
                     code=code,

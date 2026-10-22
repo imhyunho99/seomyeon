@@ -198,6 +198,8 @@ class Draft:
     content: str
     findings: list[VerificationFinding]
     created_at: str = field(default_factory=utc_now)
+    # 어떤 모델·프롬프트 버전으로 만들었는지 (재현과 감사용)
+    generation: dict[str, Any] = field(default_factory=dict)
 
 
 @dataclass(frozen=True)
