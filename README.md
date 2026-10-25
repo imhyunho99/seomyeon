@@ -90,7 +90,7 @@ SEOMYEON_DB_PATH="/var/lib/seomyeon/seomyeon-web.sqlite3" \
 seomyeon-web
 ```
 
-Production mode refuses insecure cookies, non-HTTPS origins, and tester-account seeding. The reverse proxy must also enforce HTTPS and a matching request-body limit. Legal materials remain plaintext within the SQLite database, so a real deployment must use encrypted disks and backups or migrate to encrypted managed storage.
+Set `SEOMYEON_ALLOW_SIGNUP=0` for an invite-only pilot: the signup endpoint is refused and the signup button is hidden, so accounts are created by the operator. Production mode refuses insecure cookies, non-HTTPS origins, and tester-account seeding. The reverse proxy must also enforce HTTPS and a matching request-body limit. Legal materials remain plaintext within the SQLite database, so a real deployment must use encrypted disks and backups or migrate to encrypted managed storage.
 
 ## Drafting model
 

@@ -763,3 +763,31 @@ class AuthoritySuggestWebTests(unittest.TestCase):
         client, h, matter_id = self._client(None)
         response = client.post(f"/api/matters/{matter_id}/authorities/suggest", json={}, headers=h)
         self.assertEqual(response.status_code, 503)
+
+
+class SignupToggleTests(unittest.TestCase):
+    def test_signup_can_be_disabled_for_invite_only_pilots(self) -> None:
+        directory = tempfile.TemporaryDirectory()
+        self.addCleanup(directory.cleanup)
+        database_path = Path(directory.name) / "web.sqlite3"
+        client = TestClient(
+            create_app(SqliteStore(database_path), WebConfig(allow_signup=False), AccountStore(database_path))
+        )
+        self.addCleanup(client.close)
+        response = client.post(
+            "/api/signup",
+            json={"email": "stranger@example.com", "password": "long enough password", "display_name": "x"},
+        )
+        self.assertEqual(response.status_code, 403)
+        self.assertIn("초대", response.json()["error"])
+        self.assertFalse(client.get("/api/session").json().get("signup_enabled", True))
+
+    def test_signup_flag_from_env(self) -> None:
+        from unittest.mock import patch
+
+        from seomyeon.web import _config_from_env
+
+        with patch.dict("os.environ", {"SEOMYEON_ALLOW_SIGNUP": "0"}, clear=True):
+            self.assertFalse(_config_from_env().allow_signup)
+        with patch.dict("os.environ", {}, clear=True):
+            self.assertTrue(_config_from_env().allow_signup)

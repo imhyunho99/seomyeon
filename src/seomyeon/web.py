@@ -60,6 +60,7 @@ class WebConfig:
     session_hours: int = 12
     max_request_bytes: int = 2_500_000
     max_upload_bytes: int = 10 * 1024 * 1024
+    allow_signup: bool = True
     max_storage_bytes_per_user: int = 50_000_000
     max_briefs_per_user: int = 100
     max_matters_per_user: int = 100
@@ -431,6 +432,7 @@ def create_app(
                 "authenticated": auth_session is not None,
                 "user": user_payload(auth_session) if auth_session else None,
                 "csrf_token": auth_session.csrf_token if auth_session else None,
+                "signup_enabled": config.allow_signup,
             }
         )
 
@@ -480,6 +482,11 @@ def create_app(
         return response
 
     async def signup(request: Request) -> Response:
+        if not config.allow_signup:
+            return JSONResponse(
+                {"error": "초대받은 계정만 사용할 수 있습니다. 관리자에게 계정을 요청하세요."},
+                status_code=403,
+            )
         if not origin_allowed(request):
             return JSONResponse(
                 {"error": "허용되지 않은 요청 출처입니다."}, status_code=403
@@ -1370,6 +1377,7 @@ def _config_from_env() -> WebConfig:
         session_hours=int(os.environ.get("SEOMYEON_SESSION_HOURS", "12")),
         allowed_origins=origins,
         allowed_hosts=hosts,
+        allow_signup=os.environ.get("SEOMYEON_ALLOW_SIGNUP", "1") != "0",
     )
 
 

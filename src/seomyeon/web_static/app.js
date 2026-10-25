@@ -742,6 +742,8 @@ async function boot() {
     const session = await api("/api/session");
     state.csrfToken = session.csrf_token || session.csrfToken || "";
     state.session = session.user || (session.authenticated ? session : null);
+    // 초대 전용 운영에서는 계정 만들기 버튼을 숨긴다
+    if (session.signup_enabled === false) el("signup-mode-button").hidden = true;
     if (!state.session) return showAuth();
     await refreshWorkspace();
     showWorkspace();
